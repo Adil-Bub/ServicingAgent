@@ -86,7 +86,7 @@ os.environ["GOOGLE_CLOUD_PROJECT"] = "project-8926dae7-94cf-412b-89f"
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash", 
     temperature=0,
-    api_key="AIzaSyAXWbYxSV9OFV0ftmf7FC_Ox0JMwIOclKk"
+    api_key=st.secrets["GOOGLE_API_KEY"]
 )
 
 tools = [get_loan_details, get_customer_profile, get_account_notes, change_due_date]
