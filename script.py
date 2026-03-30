@@ -125,7 +125,7 @@ agent_executor = create_agent(llm, tools, system_prompt=system_instructions)
 # ==========================================
 # 5. The Interactive UI Logic
 # ==========================================
-default_transcript = "Customer: Hi, I'm calling about loan number 5678. I recently got a new job and I get paid on the 25th now. My current payment is due on the 15th, which is really tough. Can we move my monthly due date to the 28th?"
+default_transcript = "Customer: Hi, I'm calling about loan number 5678. I recently got a new job and I get paid on the 25th now. My current payment is due on the 5th, which is really tough. Can we move my monthly due date to the 28th?"
 
 mock_transcript = st.text_area("**Customer Request**", value=default_transcript)
 
