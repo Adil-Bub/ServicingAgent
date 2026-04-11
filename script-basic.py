@@ -1,13 +1,10 @@
 import os
 import json
-import time
 import streamlit as st
-import langchain
-
-from twilio.rest import Client
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
 from langchain.agents import create_agent
+import langchain
 
 # Optional: set to False if you want to hide background LangChain terminal logs
 langchain.debug = True
@@ -17,10 +14,10 @@ langchain.debug = True
 # ==========================================
 st.set_page_config(page_title="Bank AI Agent", page_icon="🏦", layout="wide")
 st.title("🏦 AI Servicing Agent")
-st.markdown("Enter a customer transcript below or **receive a phone call** to speak to the AI.")
+st.markdown("Enter a customer transcript below to see the agent research data, enforce policy, and take action.")
 
 # ==========================================
-# 2. Initialize In-Memory Database
+# 2. Initialize In-Memory Database (Thread-Safe Fix)
 # ==========================================
 if "mock_db" not in st.session_state:
     st.session_state["mock_db"] = {
@@ -29,8 +26,8 @@ if "mock_db" not in st.session_state:
             "5678": {"customer_id": "C-112", "balance": "$2,500", "status": "Current", "monthly_payment": "$120", "current_due_date": 5, "due_date_changes_ytd": 0}
         },
         "customers": {
-            "C-998": {"name": "Victoria Richards", "customer_since": "2015", "account_tier": "Gold", "risk_score": "Low"},
-            "C-112": {"name": "Joseph Smith", "customer_since": "2024", "account_tier": "Standard", "risk_score": "Medium"}
+            "C-998": {"name": "John Doe", "customer_since": "2015", "account_tier": "Gold", "risk_score": "Low"},
+            "C-112": {"name": "Jane Smith", "customer_since": "2024", "account_tier": "Standard", "risk_score": "Medium"}
         },
         "notes": {
             "1234": "2026-03-20 [Agent 44]: Cust called to update contact info.",
@@ -38,10 +35,13 @@ if "mock_db" not in st.session_state:
         }
     }
 
+# CRITICAL FIX: We bind the session state dictionary to a global variable 
+# in the main thread. LangChain's background threads can safely access and 
+# mutate this object WITHOUT triggering Streamlit's context warnings!
 ACTIVE_DB = st.session_state["mock_db"]
 
 # ==========================================
-# 3. Define Tools 
+# 3. Define Tools (Using ACTIVE_DB)
 # ==========================================
 @tool
 def get_loan_details(loan_id: str) -> dict:
@@ -72,6 +72,7 @@ def change_due_date(loan_id: str, new_due_date: int) -> dict:
     if loan["due_date_changes_ytd"] >= 1:
         return {"status": "REJECTED", "reason": "Maximum due date changes (1 per year) exceeded."}
         
+    # Safely updating the state dictionary
     loan["current_due_date"] = new_due_date
     loan["due_date_changes_ytd"] += 1
     
@@ -121,110 +122,11 @@ Output your final response in 3 clear sections. Use bullet points for the summar
 agent_executor = create_agent(llm, tools, system_prompt=system_instructions)
 
 # ==========================================
-# 5. Twilio Speech-to-Text & The Interactive UI
+# 5. The Interactive UI Logic
 # ==========================================
+default_transcript = "Customer: Hi, I'm calling about loan number 5678. I recently got a new job and I get paid on the 25th now. My current payment is due on the 5th, which is really tough. Can we move my monthly due date to the 28th?"
 
-# Manage transcript state so it persists and links directly to the text area
-if "transcript_text" not in st.session_state:
-    st.session_state["transcript_text"] = "Customer: Hi, I'm calling about loan number 5678. I recently got a new job and I get paid on the 25th now. My current payment is due on the 5th. Can we move my monthly due date to the 28th?"
-
-# Remember if a call has successfully finished so we can draw the ghost box
-if "call_finished" not in st.session_state:
-    st.session_state["call_finished"] = False
-
-st.markdown("### 📞 Option 1: Call in your request")
-user_phone = st.text_input("Enter your phone number (e.g., +919876543210):", value="+918420605026")
-
-if st.button("Ring My Phone", type="primary"):
-    if not user_phone:
-        st.error("Please enter a phone number first.")
-    else:
-        try:
-            # Reset the finished state while a new call is happening
-            st.session_state["call_finished"] = False 
-            
-            # Initialize Twilio Client
-            twilio_client = Client(st.secrets["TWILIO_ACCOUNT_SID"], st.secrets["TWILIO_AUTH_TOKEN"])
-            twilio_number = st.secrets["TWILIO_PHONE_NUMBER"]
-
-            # TwiML instructs Twilio to speak, then record the user's response and transcribe it
-            twiml_instructions = """
-            <Response>
-                <Say>Hello. You have reached the AI Servicing Agent. Please state your loan number and your request after the beep. Press the pound key when finished.</Say>
-                <Record transcribe="true" maxLength="30" finishOnKey="#"/>
-            </Response>
-            """
-
-            # THE LIVE ANIMATED BOX
-            with st.status("Calling your phone...", expanded=True) as call_status:
-                st.write("Initiating call...")
-                call = twilio_client.calls.create(
-                    twiml=twiml_instructions,
-                    to=user_phone,
-                    from_=twilio_number
-                )
-                
-                st.write(f"Ringing... (Call SID: {call.sid})")
-                
-                # Poll until the call is finished
-                while call.status not in ["completed", "failed", "busy", "no-answer", "canceled"]:
-                    time.sleep(1)
-                    call = twilio_client.calls(call.sid).fetch()
-                
-                if call.status != "completed":
-                    st.error(f"Call ended with status: {call.status}")
-                    st.stop()
-
-                st.write("Call completed. Processing the recording...")
-                
-                # Poll to find the recording associated with this call
-                recordings = []
-                while not recordings:
-                    time.sleep(1)
-                    recordings = twilio_client.recordings.list(call_sid=call.sid)
-                
-                recording_sid = recordings[0].sid
-                st.write("Recording processed! Transcribing speech to text...")
-
-                # Poll to get the completed transcription by checking recent transcriptions
-                final_text = ""
-                while not final_text:
-                    time.sleep(1)
-                    # Fetch the 20 most recent transcriptions from Twilio
-                    recent_transcriptions = twilio_client.transcriptions.list(limit=20)
-                    
-                    # Search the list for the one matching our recording SID
-                    target_transcription = next(
-                        (t for t in recent_transcriptions if t.recording_sid == recording_sid), None
-                    )
-                    
-                    # Check if it exists and has finished processing
-                    if target_transcription and target_transcription.status == "completed":
-                        final_text = target_transcription.transcription_text
-                
-                # Update the session state key directly so the text box populates
-                st.session_state["transcript_text"] = f"Customer: {final_text}"
-                
-                # Update status to complete and keep it on screen
-                call_status.update(label="Transcription Complete!", state="complete", expanded=False)
-                st.success("Speech successfully converted to text! You can now process the request below.")
-                
-                # Tell Streamlit the call is officially done!
-                st.session_state["call_finished"] = True
-
-        except Exception as e:
-            st.error(f"Twilio Error: {e}")
-
-elif st.session_state["call_finished"]:
-    with st.status("Transcription Complete!", state="complete", expanded=False):
-        st.write("Initiating call...")
-        st.write("Ringing...")
-        st.write("Call completed. Processing the recording...")
-        st.write("Recording processed! Transcribing speech to text...")
-    st.success("Speech successfully converted to text! You can now process the request below.")
-
-st.markdown("### ⌨️ Option 2: Edit or Type Request")
-mock_transcript = st.text_area("**Customer Request**", key="transcript_text", height=100)
+mock_transcript = st.text_area("**Customer Request**", value=default_transcript)
 
 if st.button("Process Request", type="primary"):
     
@@ -290,9 +192,10 @@ if st.button("Process Request", type="primary"):
     cols[2].metric(label="Total Tokens Used", value=total_run_tokens)
 
 # ==========================================
-# 6. Sidebar Logic
+# 6. Sidebar Logic (Rendered at the end)
 # ==========================================
 with st.sidebar:
+    # 1. Database View comes first
     st.header("🗄️ Live Database View")
     st.caption("Watch these values update as the agent takes action!")
     st.subheader("🏦 Loan Records")
@@ -300,6 +203,7 @@ with st.sidebar:
     
     st.divider()
     
+    # 2. Reset Button comes below
     if st.button("🔄 Reset Database to Default", use_container_width=True):
         if "mock_db" in st.session_state:
             del st.session_state["mock_db"]
