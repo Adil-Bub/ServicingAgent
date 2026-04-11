@@ -2,7 +2,6 @@ import os
 import json
 import time
 import streamlit as st
-import langchain
 
 from twilio.rest import Client
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -31,10 +30,6 @@ if "mock_db" not in st.session_state:
         "customers": {
             "C-998": {"name": "Victoria Richards", "customer_since": "2015", "account_tier": "Gold", "risk_score": "Low"},
             "C-112": {"name": "Joseph Smith", "customer_since": "2024", "account_tier": "Standard", "risk_score": "Medium"}
-        },
-        "notes": {
-            "1234": "2026-03-20 [Agent 44]: Cust called to update contact info.",
-            "5678": "2026-01-10 [Agent 09]: Routine check-in."
         }
     }
 
@@ -52,11 +47,6 @@ def get_loan_details(loan_id: str) -> dict:
 def get_customer_profile(customer_id: str) -> dict:
     """Fetches structured background profile data for a specific customer."""
     return ACTIVE_DB["customers"].get(customer_id, {"error": "Customer ID not found."})
-
-@tool
-def get_account_notes(loan_id: str) -> str:
-    """Fetches unstructured, raw text notes left by previous human agents regarding the loan."""
-    return ACTIVE_DB["notes"].get(loan_id, "No notes found on this account.")
 
 @tool
 def change_due_date(loan_id: str, new_due_date: int) -> dict:
@@ -87,7 +77,7 @@ llm = ChatGoogleGenerativeAI(
     api_key=st.secrets["GOOGLE_API_KEY"]
 )
 
-tools = [get_loan_details, get_customer_profile, get_account_notes, change_due_date]
+tools = [get_loan_details, get_customer_profile, change_due_date]
 
 system_instructions = """
 You are a helpful AI Servicing Agent for a bank. Your job is to assist human agents by researching customer data and executing authorized account actions.
@@ -95,7 +85,6 @@ You are a helpful AI Servicing Agent for a bank. Your job is to assist human age
 When a customer provides a loan ID, you must:
 1. Fetch the loan details.
 2. Use the customer_id to fetch the customer profile.
-3. Fetch the unstructured account notes.
 
 BANK POLICY FOR DUE DATE CHANGES:
 - Customers can change their due date to any day between the 1st and the 28th of the month.
