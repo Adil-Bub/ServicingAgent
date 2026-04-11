@@ -8,9 +8,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 
-# Optional: set to False if you want to hide background LangChain terminal logs
-langchain.debug = True
-
 # ==========================================
 # 1. Setup & UI Header
 # ==========================================
